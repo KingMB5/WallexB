@@ -1,0 +1,25 @@
+# secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# runtime state & logs (never contain secrets, but stay local anyway)
+state/
+logs/
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

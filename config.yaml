@@ -1,0 +1,81 @@
+# ============ تنظیمات کلی ============
+mode: paper              # paper = شبیه‌سازی | live = واقعی (برای live باید با --live هم اجرا بشه)
+paper_equity_tmn: 5000000
+paper_slippage: 0.001    # لغزش فرضی در حالت paper
+timezone: Asia/Tehran
+db_path: data/pilot.db
+
+wallex:
+  base_url: https://api.wallex.ir
+  api_key_env: WALLEX_API_KEY
+  usdt_tmn_symbol: USDTTMN
+  paths:                 # فقط اگر مستندات والکس فرق داشت عوض کن
+    markets: /v1/markets
+    history: /v1/udf/history
+    balances: /v1/account/balances
+    orders: /v1/account/orders
+    order: /v1/account/orders/{client_id}
+
+# بازارهای مجاز ربات (اسم دقیق نمادها را با دستور discover پیدا کن)
+universe:
+  - USDTTMN
+  - BTCTMN
+  - ETHTMN
+
+discover:
+  keywords: [oil, crude, brent, gold, xau, paxg, silver, xag, نفت, طلا, نقره]
+
+fees:
+  TMN:  {maker: 0.0025, taker: 0.003}
+  USDT: {maker: 0.001,  taker: 0.0013}
+
+# ============ فیلتر روند (دروازه‌ی اصلی) ============
+# شرط صعودی: کلوز کندل بالای EMA200 و EMA20 بالای EMA200
+trend:
+  timeframes: ["240", "1D"]
+  mode: any              # any = یکی از تایم‌ها کافیه | all = هر دو باید صعودی باشن
+  fast_ema: 20
+  slow_ema: 200
+  cache_sec: 600
+
+# ============ مدیریت ریسک (سخت‌کد، هیچ LLM ای نمی‌تونه دورش بزنه) ============
+risk:
+  risk_per_trade: 0.03
+  max_positions: 2
+  max_exposure: 0.50          # حداکثر سهم سرمایه‌ی درگیر
+  daily_loss_limit: 0.03      # بعد از ۳٪ ضرر روزانه ورود جدید نه
+  kill_switch_drawdown: 0.08  # افت ۸٪ از سقف سرمایه => بستن همه و توقف
+  breakeven_r: 1.0            # بعد از 1R استاپ میره روی سر به سر
+  tp_r: 2.0                   # در 2R حالت تریلینگ فعال میشه
+  trail_r: 1.0                # فاصله‌ی تریلینگ از سقف
+  time_stop_hours: 24
+  min_move_fee_multiple: 3.0  # حرکت مورد انتظار حداقل ۳ برابر کارمزد رفت‌وبرگشت
+  max_stop_pct: 0.08          # استاپ دورتر از ۸٪ رد میشه
+  min_order_tmn: 100000       # حداقل ارزش سفارش (معادل تومان) - با والکس چک کن
+
+# ============ استراتژی‌ها (پلاگین) ============
+strategies:
+  - name: breakout_pullback
+    enabled: true
+    params:
+      timeframe: "60"
+      lookback: 20
+      min_age: 1
+      max_age: 12
+      retest_tol: 0.003
+      rr: 2.0
+      stop_buffer_atr: 0.2
+      first_retest_only: true
+
+# ============ تایید نهایی با LLM (فقط وقتی ستاپ فعال شد) ============
+llm:
+  enabled: true
+  base_url: https://ai.boxapi.ir/ai/v1
+  api_key_env: BOXAPI_KEY
+  model: gpt-5-mini
+  max_calls_per_day: 30
+  on_error: reject            # reject | allow
+
+loop:
+  scan_interval_min: 60
+  manage_interval_sec: 30

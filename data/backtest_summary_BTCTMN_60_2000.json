@@ -1,0 +1,18 @@
+{
+  "symbol": "BTCTMN",
+  "bars": 2000,
+  "trades": 48,
+  "wins": 7,
+  "losses": 41,
+  "win_rate_pct": 14.58,
+  "initial_equity": 5000000.0,
+  "final_equity": 4267268.9095,
+  "net_pnl": -732731.0905,
+  "return_pct": -14.655,
+  "profit_factor": 0.201,
+  "avg_R": -1.159,
+  "max_drawdown_pct": 15.325,
+  "fee_rate_each_side": 0.003,
+  "slippage_each_side": 0.001,
+  "note": "Strategy-only test; trend gate and LLM are not simulated."
+}

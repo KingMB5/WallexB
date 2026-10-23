@@ -1,0 +1,18 @@
+{
+  "symbol": "USDTTMN",
+  "bars": 1978,
+  "trades": 39,
+  "wins": 3,
+  "losses": 36,
+  "win_rate_pct": 7.69,
+  "initial_equity": 5000000.0,
+  "final_equity": 4537109.7095,
+  "net_pnl": -462890.2905,
+  "return_pct": -9.258,
+  "profit_factor": 0.045,
+  "avg_R": -0.983,
+  "max_drawdown_pct": 9.316,
+  "fee_rate_each_side": 0.003,
+  "slippage_each_side": 0.001,
+  "note": "Strategy-only test; trend gate and LLM are not simulated."
+}

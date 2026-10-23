@@ -2,45 +2,48 @@
 
 ## Credential handling
 
-- The Wallex API key lives **only** in the environment (`.env`, never committed)
-  or the process env of your runtime. It is never written to state files, never
-  logged, never sent anywhere except `x-api-key` headers to
-  `https://api.wallex.ir`.
-- `wallexbot/redact.py` masks every secret-looking value in logs, state and the
-  CLI (`abcd…wxyz`); `state.py` strips secret-looking keys defensively before
-  writing JSON.
-- Telegram tokens (if you enable notifications) are treated with the same rules.
+- `WALLEX_API_KEY` (trading) and `BOXAPI_KEY` (LLM confirmation) live **only**
+  in the environment or a local `.env` file — never in git, never in
+  `config.yaml`, never in logs. Code reads them via `os.environ` only
+  (`pilot/wallex.py`, `pilot/llm.py`).
+- `.env` is git-ignored. `.env.example` ships empty placeholders only.
+- The LLM never receives secrets; it only sees the setup snapshot (symbol,
+  candles, trend detail) and returns a verdict.
 
-## The live double gate
+## Going live — the double lock
 
-Real orders require ALL of:
+Real orders require BOTH:
 
-1. `LIVE_TRADING=1` (deliberate configuration)
-2. `CONFIRM_LIVE=YES` (explicit human confirmation string)
-3. `WALLEX_API_KEY` present
+1. `mode: live` in `config.yaml` (deliberate configuration), AND
+2. `--live` on the command line (explicit human action)
 
-The engine checks the gate before constructing `LiveBroker`, and the broker
-re-checks it defensively. Paper mode is the default for every code path.
+`Engine.__init__` computes `live = live_flag and cfg["mode"] == "live"`. Every
+entry additionally passes: trend gate → fee gate → hard risk sizing → LLM
+fail-closed approval. A rejected order blocks that symbol for the rest of the day.
+
+## Hard risk layer
+
+`pilot/risk.py` limits (risk-per-trade, exposure, daily loss, kill switch,
+fee gate, max stop) are hard-coded by config and cannot be overridden by the
+LLM or by any strategy. The kill switch halts the bot entirely and requires an
+explicit `python run.py reset-halt`.
 
 ## Key hygiene on Wallex
 
-- Create a dedicated API key for the bot (not your main account key).
-- Restrict permissions to the minimum the bot needs; enable IP allowlisting if
-  offered.
-- Rotate the key if it ever appears in a screenshot, chat, or log — revocation
-  first, cleanup second.
-- Prefer small caps (`MAX_POSITION_QUOTE`) over trust.
+- Use a dedicated API key for the bot with minimal permissions; allowlist your
+  server IP if the panel supports it.
+- Rotate immediately if a key ever appears in a screenshot, chat or log —
+  revoke first, clean up second.
+- The LLM provider key (`BOXAPI_KEY`) has a hard cap (`max_calls_per_day: 30`).
 
 ## Runtime posture
 
-- Read-only network egress in paper mode: only `api.wallex.ir` public endpoints
-  (+ Telegram if enabled).
-- `scripts/check_api.py --private` is strictly read-only: it never places or
-  cancels orders.
-- State files are written atomically (`state/state.json.tmp` → rename) and are
-  secret-free by construction.
+- Market data (markets/UDF history) is public and needs no key; private calls
+  (balances/orders) are only made when a key is configured.
+- Trade journal (`data/pilot.db`) and exports stay local (git-ignored).
+- `wallex_adaptive_lab/` is read-only by design — it never touches order
+  endpoints.
 
 ## Reporting
 
-Found a security issue? Please report privately instead of opening a public
-issue.
+Found a security issue? Report privately instead of opening a public issue.

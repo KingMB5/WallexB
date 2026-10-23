@@ -1,0 +1,18 @@
+{
+  "symbol": "XAUTTMN",
+  "bars": 2000,
+  "trades": 46,
+  "wins": 3,
+  "losses": 43,
+  "win_rate_pct": 6.52,
+  "initial_equity": 5000000.0,
+  "final_equity": 4147114.2138,
+  "net_pnl": -852885.7862,
+  "return_pct": -17.058,
+  "profit_factor": 0.107,
+  "avg_R": -1.303,
+  "max_drawdown_pct": 17.058,
+  "fee_rate_each_side": 0.003,
+  "slippage_each_side": 0.001,
+  "note": "Strategy-only test; trend gate and LLM are not simulated."
+}

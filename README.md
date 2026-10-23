@@ -1,110 +1,120 @@
 # WallexB
 
-**A dry-run-first spot trading bot for [Wallex](https://wallex.ir) (Iranian crypto exchange) — paper trading by default, live orders behind a double safety gate.**
+**A trend-gated breakout–pullback spot trading bot for [Wallex](https://wallex.ir) — hard-coded risk layer, fail-closed LLM confirmation, paper mode by default.**
 
-WallexB polls real Wallex market data (order book + candles), runs a pluggable
-signal strategy (SMA crossover or RSI reversion), enforces a hard risk layer
-(stop-loss, take-profit, position cap, daily loss halt), and only then — paper
-or live — executes. Nothing places a real order by accident: live trading needs
-**three** things to line up (`LIVE_TRADING=1` + `CONFIRM_LIVE=YES` + an API key),
-and every secret is masked in every log, state file and report.
+WallexB scans a small universe (USDTTMN / BTCTMN / ETHTMN), only considers longs
+when the higher-timeframe trend gate (EMA20/200 on 4h or 1D) is up, waits for a
+breakout–retest setup, sizes the position from a fixed risk budget, and manages
+exits with R-multiples (breakeven → trailing → time stop → kill switch). A final
+LLM check (BoxAPI, `gpt-5-mini`) must explicitly approve every entry — and it is
+**fail-closed**: a missing, invalid or errored verdict is a rejection.
 
-Public Wallex endpoints used by this bot were **verified live** against
-`https://api.wallex.ir` (see `docs/ARCHITECTURE.md`); private endpoints are
-clearly marked UNVERIFIED until you run the staged probe below.
+Nothing places a real order by accident: live trading needs BOTH `mode: live` in
+`config.yaml` AND the `--live` CLI flag.
 
 ## Repository layout
 
 ```
-wallexbot/           the bot package
-  client.py          Wallex REST wrapper (VERIFIED public / UNVERIFIED private, secret-redacting)
-  config.py          env-driven settings + the live double-gate
-  strategies.py      SmaCross | RsiReversion (closed candles only)
-  indicators.py      SMA + Wilder RSI in pure python
-  risk.py            stop-loss / take-profit / position cap / daily loss halt
-  brokers.py         PaperBroker (ledger + book-priced fills) | LiveBroker (gated)
-  engine.py          candles -> signal -> risk -> order -> state
-  state.py           atomic JSON state, secret-stripped on write
-  notify.py          optional Telegram (no extra dependency)
-  redact.py          secret masking used everywhere
-scripts/
-  check_api.py       staged API probe — tier 1 public (no key), tier 2 private reads
-docs/
-  ARCHITECTURE.md    flow, strategy math, risk tiers, VERIFIED/UNVERIFIED matrix
+run.py                   CLI: discover | check | scan-once | run | status | report | export | reset-halt
+backtest.py              historical backtester over Wallex UDF candles
+config.yaml              the whole bot behaviour — markets, trend gate, risk, strategy, LLM, loop
+pilot/                   the engine package
+  wallex.py              the ONLY file that talks to the Wallex HTTP API (retries, 429 backoff, cache)
+  engine.py              scan → consider → try_enter (fee gate, LLM gate) + position management loop
+  risk.py                hard limits — nothing (not even the LLM) can override them
+  broker.py              PaperBroker | LiveBroker
+  journal.py             SQLite trade journal (data/pilot.db)
+  llm.py                 BoxAPI confirmation client (fail-closed, capped calls/day)
+  trend.py               EMA20/200 trend gate on 240m / 1D
+  indicators.py          ATR & co
+  strategies/            plugin strategies (breakout_pullback, adaptive_hybrid)
+wallex_adaptive_lab/     read-only research lab: M1→M15 backtest + one-pass shadow scan (never orders)
+strategy_v1_draft/       unvalidated adaptive-hybrid hypothesis + unit tests
+tests/                   smoke tests
+data/                    backtest artifacts (summaries committed; CSVs/db stay local)
+reports/                 lab outputs (adaptive_trades.jsonl, shadow.jsonl)
 ```
 
-## Run — PAPER mode (default, safe, real market data)
+## Quickstart — PAPER (default, safe)
 
 ```bash
 pip install -r requirements.txt
-python3 -m wallexbot run                    # paper loop, BTCTMN, SMA cross, 1h candles
+python run.py discover              # list markets matching oil/gold/silver keywords (or --all)
+python run.py check                 # mode/equity + trend gate per symbol
+python run.py scan-once             # one dry scan — logs what it *would* do
+python run.py run                   # paper trading loop (SQLite journal at data/pilot.db)
 ```
 
-One-click launchers: `run_dry.sh` (Linux/macOS) / `run_dry.bat` (Windows).
-Single cycle (great for cron/CI):
+Status & results:
 
 ```bash
-python3 -m wallexbot run --once
-python3 -m wallexbot status                 # secret-free state snapshot
+python run.py status                # equity, halted flag, open trades, stats
+python run.py report                # last 20 closed trades with R multiples
+python run.py export                # journal -> data/journal.csv
+python run.py reset-halt            # clear kill switch, reset peak equity
 ```
 
-Paper fills are priced from the **live order book** (best ask/bid) with
-slippage and a configurable fee — so paper results are a realistic rehearsal,
-not a fantasy backtest.
+`mode: paper` in `config.yaml` is the safe default; paper fills apply realistic
+fees and slippage (configurable).
 
-## Verify the API before going live
+## Going LIVE (real money — read carefully)
 
-```bash
-python3 scripts/check_api.py                            # tier 1: public, no key needed
-WALLEX_API_KEY=<key> python3 scripts/check_api.py --private   # tier 2: read-only account probes
-```
+1. `cp .env.example .env` and set `WALLEX_API_KEY` (wallex.ir → API keys; use a
+   dedicated key, restrict permissions, allowlist your IP if possible).
+2. Optional LLM confirmation: set `BOXAPI_KEY` (without it, `on_error: reject`
+   means every entry is rejected — the bot will paper-scan but never buy).
+3. Change `mode: paper` → `mode: live` in `config.yaml`.
+4. Start with a small `paper_equity_tmn`-sized universe and reduced
+   `risk_per_trade`, then: `python run.py run --live`
 
-Every step prints PASS/FAIL/UNVERIFIED with a redacted error. The script never
-places or cancels orders.
+Both switches are required; the engine double-locks them.
 
-## Run — LIVE mode (real money — read this twice)
+## Hard risk layer (config.yaml `risk:` — no exceptions)
 
-1. `cp .env.example .env`, set `WALLEX_API_KEY` (from wallex.ir → API Keys —
-   **restrict its permissions** to what the bot needs and use an IP allowlist
-   if the panel offers one).
-2. Set `LIVE_TRADING=1` **and** `CONFIRM_LIVE=YES`.
-3. Start with tiny limits: `ORDER_QUOTE_AMOUNT=100000 MAX_POSITION_QUOTE=200000 STOP_LOSS_PCT=2`.
-4. Then: `python3 -m wallexbot run --live`
+| Control | Default |
+|---|---|
+| Risk per trade | 3% of equity |
+| Max concurrent positions | 2 |
+| Max exposure | 50% of equity |
+| Daily loss limit | 3% → no new entries today |
+| Kill switch drawdown | 8% under peak equity → close all + halt (needs `reset-halt`) |
+| Breakeven / TP / trailing | at 1R stop→BE, at 2R trail by 1R |
+| Time stop | 24h |
+| Fee gate | expected move ≥ 3× round-trip fees |
+| Max stop width | 8% |
 
-The engine re-checks the gate and refuses to start otherwise. Private order
-endpoints are UNVERIFIED — your first `--live` run IS the verification: start
-with the smallest possible order and watch the logs.
+## Backtest evidence (honest numbers)
 
-## Risk layer (always on)
+From `backtest.py` (strategy-only; trend gate & LLM not simulated; fees 0.3% +
+slippage 0.1% per side):
 
-| Control | Env | Default |
-|---|---|---|
-| Stop-loss | `STOP_LOSS_PCT` | 3% |
-| Take-profit | `TAKE_PROFIT_PCT` | 6% |
-| Max open position | `MAX_POSITION_QUOTE` | 2,000,000 TMN |
-| Daily loss halt (auto-resets next day) | `DAILY_MAX_LOSS_PCT` | 5% |
-| Min order size | `MIN_NOTIONAL` | 50,000 TMN |
+| Symbol | Bars | Trades | Win rate | Return | PF | Max DD |
+|---|---|---|---|---|---|---|
+| BTCTMN | 2000 | 48 | 14.6% | **−14.7%** | 0.20 | 15.3% |
+| USDTTMN | 1978 | 39 | 7.7% | **−9.3%** | 0.05 | 9.3% |
+| XAUTTMN | 2000 | 46 | 6.5% | **−17.1%** | 0.11 | 17.1% |
 
-Tier-2 (never offered): margin/leverage, orders above the position cap, trading
-after the daily halt fired. See `docs/ARCHITECTURE.md`.
+The raw breakout–pullback strategy is **not profitable as-is** — that is exactly
+why this repo ships with paper-only defaults, a research lab
+(`wallex_adaptive_lab/`) and a draft strategy (`strategy_v1_draft/`). Do not go
+live expecting the current config to make money.
 
 ## Disclaimer
 
-Trading crypto involves substantial risk. This bot is an engineering project,
-not financial advice. Paper-trade for days before enabling live mode, and never
-trade money you cannot afford to lose.
+Trading crypto involves substantial risk. This is an engineering project, not
+financial advice. Run paper for days, inspect `report` output, and never trade
+money you cannot afford to lose.
 
 ## خلاصه‌ی فارسی
 
-**والکس‌بی** ربات معامله‌گر اسپات برای صرافی والکس است که با اصل «اول شبیه‌سازی،
-بعد معامله‌ی واقعی» ساخته شده: به‌صورت پیش‌فرض با داده‌ی واقعی بازار (عمق بازار و
-کندل‌های UDF) اما با پول کاغذی کار می‌کند و هیچ‌وقت تصادفی سفارش واقعی نمی‌گذارد.
-برای معامله‌ی واقعی، سه چیز باید هم‌زمان برقرار باشد: `LIVE_TRADING=1`،
-`CONFIRM_LIVE=YES` و کلید API — و در همه‌ی لاگ‌ها و فایل‌های وضعیت، کلیدها با
-`redact.py` ماسک می‌شوند. دو استراتژی آماده دارد (تقاطع SMA و بازگشت RSI) و هر
-سیگنال قبل از اجرا از لایه‌ی ریسک رد می‌شود: حد ضرر، حد سود، سقف موقعیت، توقف
-روزانه‌ی ضرر و حداقل حجم سفارش. اسکریپت `scripts/check_api.py` اندپوینت‌های
-عمومی (وریفای‌شده) و خصوصی (فقط خواندنی) را مرحله‌به‌مرحله چک می‌کند و وضعیت
-PASS/FAIL/UNVERIFIED چاپ می‌کند. اعلان اختیاری تلگرام هم دارد. توصیه‌ی جدی: چند
-روز در حالت paper اجرا کن، بعد با کوچک‌ترین سفارش ممکن live برو — این پروژه
-مهندسی است، نه توصیه‌ی مالی.
+**والکس‌بی** ربات اسپات برای صرافی والکس است: فقط وقتی روند تایم‌بالاتر (EMA20/200
+در ۴ساعته یا روزانه) صعودی باشد سراغ ستاپ‌های شکست–پولبک می‌رود، حجم را از بودجه‌ی
+ریسک ثابت حساب می‌کند و خروج‌ها را با مضارب R مدیریت می‌کند (سر‌به‌سر در 1R، تریلینگ
+در 2R، تایم‌استاپ ۲۴ ساعته و کیل‌سوییچ افت ۸٪). قبل از هر خرید واقعی، یک LLM
+(باکس‌ای‌پی‌آی) باید صریحاً تأیید کند — و اگر جوابی نیامد یا خراب بود، «رد» می‌شود
+(fail-closed). هیچ‌چیز به‌صورت تصادفی سفارش واقعی نمی‌گذارد: برای لایو بودن، هم
+`mode: live` در کانفیگ لازم است هم فلگ `--live`. حالت پیش‌فرض paper با کارمزد و
+لغزش واقع‌گرایانه است و همه‌ی محدودیت‌های ریسک سخت‌کد هستند و حتی LLM هم نمی‌تواند
+دورشان بزند. نتایج بک‌تست فعلی منفی است (صادقانه در جدول بالا) — یعنی با این کانفیگ
+لایو نرو؛ اول paper و آزمایشگاه تحقیقاتی. دستورهای اصلی: `discover`، `check`،
+`scan-once`، `run`، `status`، `report`، `export`، `reset-halt`.
